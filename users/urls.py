@@ -2,6 +2,7 @@ from django.urls import path
 from users import views
 from django.contrib.auth import views as auth_views
 from users.form import CustomPasswordResetForm, CustomSetPasswordForm
+from django.views.decorators.cache import cache_page
 
 app_name = "users"
 
@@ -11,6 +12,7 @@ urlpatterns = [
     path('profile/', views.UserProfileView.as_view() , name="profile"),
     path('logout/', views.logout, name='logout'),
     path('profile_image_upload/', views.profile_image_upload, name='profile_image_upload'),
+    path('adding_students/', views.AddUsersView.as_view(), name='adding_students'),
 
     path('reset_password/', auth_views.PasswordResetView.as_view(
         template_name='users/reset_password.html',

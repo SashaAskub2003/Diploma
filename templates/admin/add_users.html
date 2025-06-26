@@ -1,0 +1,73 @@
+{% extends "unfold/layouts/base.html" %}
+
+{% block content %}
+    {% load static %}
+    <link rel="stylesheet" href="{% static "css/adding_students.css" %}">
+    <div class="popup-message">
+    </div>
+
+    <div class='base-container'>
+        <div id="dropZone"></div>
+
+        <div class="form-container">
+            <h1>Додавання студентів</h1>
+            <h2>Перетягніть сюди файл або натисніть кнопку нижче</h2>
+            <p id="fileName"></p>
+            <button id="uploadFile">Завантажити файл</button>
+            <form id="fileForm" action="{% url "users:adding_students" %}" method="post" enctype="multipart/form-data">
+                <input 
+                type="file" 
+                id="fileInput"
+                accept=".xls, .xlsx ,.doc,.docx,.xml,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                >
+            </form>
+        </div>
+    </div>
+
+    <div class="students-adding-container">
+
+        <div class='preview-form-container'>
+            <div class="title-preview-container">
+                <p>Створення студентів</p>
+                <img src="{% static "icons/cross.svg" %}" id='cross-preview-container'>
+            </div>
+            <div class="students-base-container">
+                <div class="students-list-container">
+                    <div class='preview-students-container__title'>
+                        <div>Ім'я</div>
+                        <div>Прізвище</div>
+                        <div>Пошта</div>
+                        <div>Кодове Ім'я</div>
+                        <div>Пароль</div>
+                    </div>
+        
+
+                </div>
+            </div>
+
+            <div id="spinner-loader" class="loader">
+                <div class="spinner"></div>
+            </div>
+
+            <form id="previewForm" action="">
+                {% csrf_token %}
+            </form>
+
+            <div class="info-and-button-container">
+                <div class="info">
+                    <p>10/5</p>
+                </div>
+
+
+                <div class='button-container'>
+                    <button class='out-button'>Закрити</button>
+                    <button form="previewForm" id="student-adding-btn" class='submit-btn'>Створити</button>
+                </div>
+            </div>
+
+
+        </div>
+    </div>
+
+    <script src="{% static "js/dropzone_adding_students.js" %}"></script>
+{% endblock %}

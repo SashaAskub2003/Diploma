@@ -14,7 +14,7 @@
         </div>
         {% endif %}
         
-        <form method='post' class='form-content' enctype="multipart/form-data" id='form-edit-test'>{% csrf_token %}
+        <form method='post' class='form-content' enctype="multipart/form-data" id='testForm'>{% csrf_token %}
             <div class='form-group'>
                 {{ form.name }}
             </div>
@@ -32,6 +32,10 @@
                 <!-- Контейнер для показа имени загруженного файла -->
                 <span id="fileName" class="file-name"></span>
             </div>
+
+            <div class='form-group'>
+                {{ form.duration }}
+            </div>
             
             <div class='form-group'>
                 {{ form.category }}
@@ -41,8 +45,16 @@
                 {{ form.check_type }}
             </div>
             
-            <div class='form-group'>
-                {{ form.date_out }}
+            <div class="date-wrapper">
+                <div class='date-wrapper-block'>
+                    <label class='date-wrapper-label'>Доступний с</label>
+                    {{ form.date_in }}
+                </div>
+
+                <div class="date-wrapper-block">
+                    <label class='date-wrapper-label'>Доступний до</label>
+                    {{ form.date_out}}
+                </div>
             </div>
             
         </form>
@@ -51,8 +63,10 @@
         {{ error }}
         {% endfor %}
     </div>
-    <button type='submit' class='save-btn' form='form-edit-test'>Зберегти зміни</button>
+    <button type='submit' class='save-btn' form='testForm'>Зберегти зміни</button>
 
+    <script src="{% static "js/date_synchronization.js" %}"></script>
+    <script src="{% static "js/check_duration_field.js" %}"></script>
     <script src="{% static "js/create_test_add_image.js" %}"></script>    
 </body>
 {% endblock %}

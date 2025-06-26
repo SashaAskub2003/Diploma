@@ -1,66 +1,44 @@
 # tests/views.py
+# Базовые библиотеки
+from copyreg import constructor
+from decimal import Decimal
+from multiprocessing import Value
+import os
 import random
-from django.db.models import F, ExpressionWrapper, Prefetch, fields
-from django.forms import ClearableFileInput, DateInput, Textarea
+import base64
+from datetime import datetime, timedelta
+from wsgiref.util import request_uri
+
+# Импортируем библиотеки Django
+from django.utils import timezone
+from django.views.generic import FormView, TemplateView, UpdateView
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.files.storage import default_storage
+from django.db.models import F, ExpressionWrapper, Prefetch, Sum, fields
+from django.forms import ClearableFileInput, DateInput, DateTimeInput, NumberInput, TextInput, Textarea
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, get_object_or_404, redirect
 from django.utils.timezone import localtime, now
 from django.urls import reverse, reverse_lazy
+from django.core.files.base import ContentFile
 from django.views import View
 
+# Библиотеки проекта
+from common.mixins import CacheMixin
+from tests.utils import check_min_datetime, send_emails_from_users
 from users.models import User, UsersGroupMembership
 from .models import Categories, MatchingPair, QuestionGroup, TestResult, Tests, Question, Answer, TestsReviews
 from .forms import MatchingPairForm, QuestionGroupForm, QuestionStudentsForm, TestForm, QuestionForm, AnswerForm, TestReviewForm, TestTakeForm
-from django.core.files.base import ContentFile
-from django.views.generic import FormView, TemplateView, UpdateView
-from django.contrib.auth.mixins import LoginRequiredMixin
-import base64
-import os
-from django.core.files.storage import default_storage
-from datetime import timedelta
+
 
 def index(request):
     return render(request, 'tests/index.html')
 
+
 class UserRatingView(LoginRequiredMixin, TemplateView):
-    """
-    Displays the page where tests for which there are already 
-    results from other group members are posted.
-
-    This view will display for the average user a page with tests for which he has a result, 
-    and for the teacher will display all the tests that he has created.
-
-    Attributes
-    ----------
-    template_name : str
-        The path to the template user for rendering rating page.
-
-    Methods
-    -------
-    get_context_data(**kwargs)
-        In this method, we get information about(tests, user, group, active_tab)
-    """
-
     template_name = 'tests/rating.html'
 
     def get_context_data(self, **kwargs):
-        """
-        Retrieves and adds data to the context for rendering the rating page.
-
-        Parameters
-        ----------
-        **kwargs : dict
-            Additional keyword arguments passed to the view.
-
-        Returns
-        -------
-        dict
-            A dictionary containing the following keys:
-            - 'tests' : QuerySet of tests filtered by the user's role in the group (either teacher or student).
-            - 'group' : The name of the group. If the user is not part of a group, it returns None.
-            - 'active_tab' : Used to highlight the active tab in the navigation menu (affects link styling in `base.html`).
-        """
-
         context = super().get_context_data(**kwargs)
         user = self.request.user
         
@@ -97,52 +75,19 @@ class UserRatingView(LoginRequiredMixin, TemplateView):
 
 
 class RatingTestView(LoginRequiredMixin, TemplateView):
-    """
-    This view renders the rating_test page
-
-    This page will draw a table with the result of users on the test that was selected on the rating page 
-
-    Attributes
-    ----------
-    template_name : str
-        This variable contains the path to the rating_test page
-
-    Methods
-    -------
-    get_context_data(**kwargs)
-        This method retrieves data(test, user, results, active_tab)
-    """
     template_name = "tests/rating_test.html"
 
     def get_context_data(self, **kwargs):
-        """
-        This method retrieves data to be passed to rating_test
-
-        Parametrs
-        ---------
-        **kwargs : dict
-            Additional keyword arguments passed to the view.
-
-        Returns
-        -------
-        dict
-            The following keys are passed in this dictionary
-            - 'test' : The test object is transferred.
-            - 'results': Queryset which contains test results (TestsResult model),
-            user,test,score,duration these parameters will be used in the template, 
-            if the user is not in the group we pass an empty list.
-            - 'active_tab' : Used to highlight the active tab in the navigation menu (affects link styling in `base.html`).
-        """
-        
         context = super().get_context_data(**kwargs)
         user = get_object_or_404(User, id=self.request.user.id)
         test_id = self.kwargs.get('test_id')
 
 
+        # Получаем тест и группу пользователя
         test = get_object_or_404(Tests, id=test_id)
         user_group = UsersGroupMembership.objects.filter(user=user).select_related('group').first()
 
-
+        # Если группа существует возвращаем результаты по тестам всех группы, иначе пустой список
         if user_group:
             group_members = UsersGroupMembership.objects.filter(group=user_group.group).select_related('user')
             results = TestResult.objects.filter(
@@ -198,44 +143,12 @@ class RatingTestView(LoginRequiredMixin, TemplateView):
 
 
 class AllTestsView(LoginRequiredMixin, TemplateView):
-    """
-    This view renders the all_tests page
-
-    This page contains tests created by the teacher of the group,
-    all the tests are displayed for the administrator.
-
-    Attributes
-    ----------
-    template_name : str
-        This variable contains the path to all_tests page
-
-    Methods
-    -------
-    get_context_data(**kwargs)
-        This method retriever data(tests)
-    """
-
     template_name = "tests/all_tests.html"
 
     def get_context_data(self, **kwargs):
-        """
-        This method retrives data to all_tests page
-        
-        Parametrs
-        ---------
-        **kwargs : dict
-            Additional keyword arguments passed to the view
-
-        Returns
-        -------
-        dict
-            The following keys are passed in this dictionary
-            - 'tests': QuerySet where the filtered tests are located
-            - 'active_tab': Used to highlight the active tab in the navigation menu (affects link styling in `base.html`).
-        """
-
         context = super().get_context_data(**kwargs)
 
+        # Если админ то отображаем все тесты, иначе только тесты текущего пользователя
         if self.request.user.is_superuser:
             tests = Tests.objects.all()
         else:
@@ -261,77 +174,20 @@ class AllTestsView(LoginRequiredMixin, TemplateView):
 
 
 class CreateTestView(LoginRequiredMixin, FormView):
-    # TODO Обновить доку в ближайшее время
-    """
-    Handles the creation of tests by teachers.
-
-    Attributes:
-    ----------
-    template_name : str
-        Path to the HTML template for rendering the test creation page.
-    form_class : Form instance
-        The form class used to collect test data(tests.forms.TestForm, line=9).
-
-    Methods:
-    -------
-    get_form_kwargs()
-        Adds the current user to the form context.
-    form_valid(form)
-        Creates and saves a new test instance if the form data is valid.
-    form_invalid(form)
-        Renders the form page with validation errors for user correction.
-    get_context_data(**kwargs)
-        Adds additional context variables (e.g., active link) to the template.
-    get_success_url()
-        Returns the URL for redirecting upon successful form submission.
-    """
-
     template_name = 'tests/create_test.html'
     form_class = TestForm
 
     def get_form_kwargs(self):
-        """
-        Returns the current user to the form
-
-        Returns
-        -------
-        - 'user': Current user
-        """
-
         kwargs = super().get_form_kwargs()
         kwargs['user'] = self.request.user
         return kwargs
     
     def form_valid(self, form):
-        """
-        Processes the validated form data to create and save a test instance.
-
-        Parameters
-        ----------
-        form : Form instance
-            The validated form filled out by the user.
-
-        Returns
-        -------
-        HttpResponseRedirect
-            A redirect to the success URL, as defined in the `get_success_url` method.
-
-        Notes
-        -----
-        - The `super().form_valid(form)` method is called to handle the redirection logic.
-        - The `get_success_url` method from the parent class (`FormView`) is used to determine the redirect destination.
-        - Before calling the parent method, this implementation saves additional data (e.g., test duration, user, and selected students) to the `Tests` model instance.
-        """
-
+        # Связываем форму с переменной но без сохранения в БД
         test = form.save(commit=False)
         test.user = self.request.user
 
-        # Обработка студентов
-        selected_students = form.cleaned_data.get('students')
-        test.students = {'students': selected_students}
-
-
-        # Обработка длительности
+        # Получаем время на прохождение из кастомного поля формы
         test.duration = form.cleaned_data.get('raw_duration')
         test.save()
 
@@ -339,68 +195,43 @@ class CreateTestView(LoginRequiredMixin, FormView):
         return super().form_valid(form)
 
     def form_invalid(self, form):
-        """
-        Returns an invalid form to handle errors in the template
-        """
-        # Сбор ошибок формы
+        """ Если форма не валидна то собераем все ошибки и рендерим их в шаблон """
         errors = []
-        # Общие ошибки формы
+
         if form.non_field_errors():
             errors.extend(form.non_field_errors())
-        # Ошибки полей
+
         for field, field_errors in form.errors.items():
             for error in field_errors:
                 errors.append(f"- {error}")
 
-        # Передаем ошибки в шаблон
         return self.render_to_response({'form': form, 'errors': errors})
     
-    
     def get_context_data(self, **kwargs):
-        """
-        This method returns to the data in the template context
-
-        Returns
-        -------
-        dict
-          - 'active_link':sed to highlight the active link in the navigation menu (affects link styling in `base.html`).
-        """
         context = super().get_context_data(**kwargs)
-        context['active_link'] = 'create'
+
+        # Доабвление active_tab необходимо для правильной работы стилей ссылок в header 
+        context['active_tab'] = 'create'
         return context
     
-        
     def get_success_url(self) -> str:
-        """
-        Returns
-        ------- 
-        Url to redirect to the add questions page after creating a quiz
-        """
-
         return reverse('tests:add_questions', kwargs={'test_id': self.object.id})
     
 
 class EditTestView(UpdateView):
-    """
-    Edit test view.
-
-    Attributes
-    ----------
-    model : Model Object
-        Refers to the Tests model, which is located at tests.models.Tests (line=18).
-    template_name : str
-        Path to the HTML tamplate for rendering the test edit page.
-    fields: list['str']
-        Contains the names of fields from the Tests model that will be passed to the form so that they can be modified.
-    success_url : url path
-        Contains the url path to which the user will be redirected after successful test change, the url specified in success_url can be viewed in tests.urls (line=15).
-    """
     model=Tests
     template_name = "tests/edit_test.html"
-    fields = ['name', 'description','image', 'date_out', 'category', 'check_type']
+    fields = ['name', 'description','image', 'duration', 'date_in','date_out', 'category', 'check_type']
 
     def form_valid(self, form):
-        print("Submitted date:", form.cleaned_data['date_out'])
+        #Модифицируем время
+        duration = form.cleaned_data.get('duration')
+        if duration is not None and isinstance(duration, timedelta):
+            form.instance.duration = timedelta(minutes=int(duration.total_seconds()))
+        else:
+            form.add_error('duration', 'Невірний формат часу на проходження тесту')
+            return super().form_invalid(form)
+            
         return super().form_valid(form)
 
     def get_context_data(self, **kwargs):
@@ -416,34 +247,60 @@ class EditTestView(UpdateView):
         return context
     
     def get_form(self, form_class = None):
-        
+        """Что делаем:
+        1. Получаем форму
+        2. Делаем необходимое количество строк в поле description через attrs
+        3. Убираем картинку из предзаполнения формы
+        4. Добавляем класс, id, и текст для поля image
+        5. Добавляем список категорий исключая базовый пустой вариант виджета
+        6. Добавляем класс и тип для виджета date_out
+        7. Присваиваем date-out локальное отображение даты сервера
+        """
+
         form = super().get_form(form_class)
-        print("Original date_out:", self.object.date_out)  # Дата из объекта
-        print("Formatted date_out:", self.object.date_out.strftime('%Y-%m-%d'))  # Отформатированная дата
-        
+
         form.fields['description'].widget = Textarea(attrs={'rows': 4})
         form.initial['image'] = None
         form.fields['image'].widget = ClearableFileInput(attrs={
-            'class': 'form-image-field',  # Класс для стилизации
-            'data-no-file-text': 'Оберіть фото',  # Можно добавить атрибуты, если нужно
+            'class': 'form-image-field',
+            'data-no-file-text': 'Оберіть фото',  
             'id': 'uploadImage'
         })
 
+        form.fields['duration'].widget = TextInput(attrs={'id':'durationField', "placeholder": 'Введіть тривалість тесту в хвилинах'})
+        form.initial['duration'] = int(self.object.duration.total_seconds() / 60)
+
         form.fields['category'].choices = [(item.id, item.name) for item in Categories.objects.all()]
 
-        form.fields['date_out'].widget = DateInput(
-            attrs={'type': 'date', 'class': 'date-wrapper'}
+        form.fields['date_in'].widget = DateTimeInput(
+            attrs={
+                'type': 'datetime-local',
+                'class': 'form-control',  # опционально (для стилизации)
+                'min': check_min_datetime(localtime(self.object.date_in), localtime())
+            },
+            format='%Y-%m-%dT%H:%M'     # обязательный формат
         )
 
+        form.fields['date_out'].widget = DateTimeInput(
+            attrs={
+                'type': 'datetime-local',
+                'class': 'form-control',  # опционально (для стилизации)
+                'min': check_min_datetime(localtime(self.object.date_in), localtime())
+            },
+            format='%Y-%m-%dT%H:%M'     # обязательный формат
+        )
+
+        if self.object.date_in:
+            local_date = localtime(self.object.date_in)
+            form.initial['date_in'] = local_date.strftime('%Y-%m-%dT%H:%M')
+
         if self.object.date_out:
-            # Преобразуем дату в локальную таймзону
-            local_date = localtime(self.object.date_out).date()
-            form.initial['date_out'] = local_date.strftime('%Y-%m-%d')
-            print("Local date_out for form:", local_date)
+            local_date = localtime(self.object.date_out)
+            print("LOCAL DATETIME",local_date)
+            form.initial['date_out'] = local_date.strftime('%Y-%m-%dT%H:%M')
         return form
     
     def get_success_url(self):
-        # Correct way to pass pk as an argument
         return reverse_lazy('tests:add_questions', kwargs={'test_id': self.object.id})
 
 
@@ -476,48 +333,18 @@ class EditTestView(UpdateView):
 def delete_test(request, test_id):
     test = get_object_or_404(Tests, id=test_id)
     test.delete()
-    # messages.success(request, 'Тест успешно удалён!')
     return redirect('app:index')
 
 
 class AddQuestionGroupView(LoginRequiredMixin, FormView):
-    """
-    The view is used to create a group for the questions in the test 
-
-    Attributes
-    ----------
-    template_name : str
-        Path to the HTML template for rendering the add question group page
-    form_class : Form instance
-        The form class used to collect test data(tests.forms.QuestionGroupForm, line=125)
-    
-    Methods
-    -------
-    form_valid(form)
-        Saves the question group for the test if the form is valid
-    """
-
     template_name = 'tests/adq.html'
     form_class = QuestionGroupForm
 
     def form_valid(self, form):
-        """
-        Processes the validated form data to create and save a question group instance
-
-        Parameters
-        ----------
-        form : Form instance
-            The validated form filled out by the user
-        
-        Returns
-        -------
-        HttpResponseRedirect
-            Redirects to the url specified in the redirect function,
-            also passes test.id required for the specified url (path to url tests.urls, line=18).
-        """
         test_id = self.kwargs.get('test_id')
         test = get_object_or_404(Tests, id=test_id)
 
+        # Присваеваем группу вопросов к тесту
         question_group = form.save(commit=False)
         question_group.test = test
         question_group.save()
@@ -545,73 +372,35 @@ class AddQuestionGroupView(LoginRequiredMixin, FormView):
 
 #     return render(request, 'tests/adq.html', context=context)
     
+
 class AddQuestionsView(LoginRequiredMixin, TemplateView):
-    """
-    This view is used to create questions for tests, 
-    also 2 forms are used here, the form for adding 
-    questions and the form for adding students to the test
-
-    Attributes
-    ----------
-    template_name : str
-        Path to the HTML tempalte for rendering the add question page.
-
-    Methods
-    -------
-    get_context_data(**kwargs)
-        Adds additional context variables (test, question_groups, ungrouped_questions,question_form, form_student)
-    post(*args, **kwargs)
-
-    """
-
     template_name = 'tests/add_questions.html'
 
     def get_context_data(self, **kwargs):
-        """
-        This method returns to the data in the tamplate context
-
-        Returns
-        -------
-        dict
-          A dictionary containing the following keys:
-          - 'test': returns Object test
-          - 'question_groups': Queryset which returns questions that are in groups of questions.
-          - 'ungrouped_questions': a Queryset that contains questions not supported by any of the question groups.
-          - 'question_form': Question creation form (this form can be viewed at tests.forms.QuestionForm, line=135).
-          - 'form_student': Form for selecting students from the group in which the teacher is a member.
-        """
         context = super().get_context_data(**kwargs)
         test_id = self.kwargs.get('test_id')
 
-        # Получаем тест с минимальным количеством запросов
+        # Получаем тест и пользователя
         test = get_object_or_404(Tests.objects.select_related('user'), id=test_id)
         user = self.request.user
 
-        
-        # Заранее загружаем все вопросы, связаные с тестом
+        # Получаем все вопросы теста и связанные с ними группы
         questions = Question.objects.filter(test=test).select_related('group')
 
-
-        # Группы вопросов с предзагрузкой вопросов
-        question_groups = (
+        # Получаем все группы вопросов, связанные с тестом, и предзагружаем их вопросы
+        question_groups = list(
             QuestionGroup.objects.filter(test=test).prefetch_related(
                 Prefetch('questions_group', queryset=questions)
             )
         )
         
-        # print(question_groups)
-        # for group in question_groups:
-        #     print(group)
-        #     for question in group.questions_group.all():
-        #         print(question)
+        # Получаем все вопросы, которые не пренадлежат ни одной из груп
+        ungrouped_questions = list(questions.filter(group__isnull=True))
 
-        # заранее фильтруем вопросы без группы
-        ungrouped_questions = [q for q in questions if q.group is None]
-
-
-        # Формы
+        # Инициализируем формы
         question_form = QuestionForm(test=test)
         form_student = QuestionStudentsForm(test=test, user=user)
+
 
         context.update({
             'test': test,
@@ -623,69 +412,20 @@ class AddQuestionsView(LoginRequiredMixin, TemplateView):
 
         return context
 
-    
     def post(self, request, *args, **kwargs):
-        """
-        Handles post requests sent from the client, 
-        forms from which post requests to this view may be received:
-        (the path to both forms is the same, tests.forms)
-        QuestionForm - line 135
-        QuestionStudentsForm - line 197
-
-        Parameters
-        ----------
-        request : HttpRequest
-            the HTTP request object containing form data.
-        *args : tuple
-            Additional positional arguments
-        **kwargs : dict
-            Additional keyword arguments, including 'test_id'.
-
-        Returns
-        -------
-        HttpResponse
-            - On successful processing of the `QuestionForm`, redirects to the add questions page.
-            - On successful processing of the `QuestionStudentsForm`, returns a JSON response with status "success."
-            - If the forms are invalid, re-renders the page with errors displayed in the context.
-
-        Behavior
-        --------
-        - Determines the form type (`form_question` or `form_student`) based on the `form_type` field in the POST data.
-        - Validates the submitted form:
-          - If `QuestionForm` is valid, saves the question and associates it with the test.
-          - If `QuestionStudentsForm` is valid, updates the test's student information and saves it.
-        - If a form is invalid, errors are logged and displayed to the user.
-
-        Side Effects
-        ------------
-        - Saves the question to the database if `QuestionForm` is valid.
-        - Updates the test's `students` field if `QuestionStudentsForm` is valid.
-
-        Notes
-        -----
-        - The context for re-rendering the page includes updated forms and their validation states.
-        - If the `form_type` is not recognized, the method falls back to re-rendering the page with context data.
-
-        Examples
-        --------
-        Submitting a question form:
-        >>> POST data: {'form_type': 'form_question', 'question_text': 'Sample question', ...}
-        Redirects to 'tests:add_questions' with the test ID.
-
-        Submitting a student form:
-        >>> POST data: {'form_type': 'form_student', 'students': ['1', '2'], ...}
-        Returns: {"status": "success", "message": "Студенты обновлены."}
-        """
-        
+        print(request.POST)
         test_id = self.kwargs.get('test_id')
         test = get_object_or_404(Tests, id=test_id)
         user = request.user
 
+        # Получаем тип формы из POST-запроса
         form_type = request.POST.get('form_type')
 
+        # Получаем формы и передаем в них тест, пользователя и данные запроса
         question_form = QuestionForm(request.POST, request.FILES, test=test)
         students_form = QuestionStudentsForm(request.POST, request.FILES, test=test, user=user)
 
+        # Если в запросе попытка добавить вопрос то обрабатываем его
         if form_type == 'form_question':
             if question_form.is_valid():
                 question = question_form.save(commit=False)
@@ -693,28 +433,30 @@ class AddQuestionsView(LoginRequiredMixin, TemplateView):
                 question.save()
                 return redirect('tests:add_questions', test_id=test.id)
             else:
-                # Сбор ошибок формы
+                # Если форма не валидна, собираем ошибки и рендерим их в шаблон
                 errors = []
-                # Общие ошибки формы
+
                 if question_form.non_field_errors():
                     errors.extend(question_form.non_field_errors())
-                # Ошибки полей
+
                 for field, field_errors in question_form.errors.items():
                     for error in field_errors:
                         errors.append(f"- {error}")
 
-                # Передаем ошибки и форму в контекст
                 context = self.get_context_data(test_id=kwargs.get('test_id'))
                 context['form_question'] = question_form
                 context['errors'] = errors
             
-                # Возвращаем обновленный контекст с ошибками
                 return self.render_to_response(context)
-            
+        
+        # Если в запросе попытка добавить студентов то обрабатываем его
         elif form_type == 'form_student':
+            # Если форма валидна, то получаем спасок всех студентов и сохраняем в одноименнованное поле в модели Tests
             if students_form.is_valid():
+                data_users = students_form.cleaned_data.get('students')
                 test.students = {'students': students_form.cleaned_data.get('students')}
                 test.save()
+                send_emails_from_users(data_users, test)
                 return JsonResponse({'status': 'success', 'message': 'Студенты обновлены.'})
             else:
                 return JsonResponse({'status': 'error', 'message': 'Opps, помилка'})
@@ -788,7 +530,6 @@ def delete_question(request, question_id):
 
 
 def complete_questions(request, test_id):
-    # После завершения добавления вопросов переходим на страницу с вопросами или на другую подходящую страницу
     return redirect('app:index')
 
 
@@ -797,20 +538,30 @@ class AddAnswersView(LoginRequiredMixin, FormView):
     form_class = AnswerForm
 
     def form_valid(self, form):
-        print(self.request.POST)
         question_id = self.kwargs.get('question_id')
         question = get_object_or_404(Question, id=question_id)
 
+        # Связываем форму с переменной но без сохранения в БД после чего присваиваем ответ к вопросу
         answer = form.save(commit=False)
         answer.question = question
         answer.save()
+
+        if question.answer_type == "INP":
+            question.update_question_score()
+
+        # print("КОЛ_ВО очков",total_score)
         return redirect('tests:add_answers', question_id=question.id)
     
+    def form_invalid(self, form):
+        print(form.errors)
+        return super().form_invalid(form)
+    
     def get_context_data(self, **kwargs):
+        """ Получаем вопрос а также все его ответы и его группу"""
         context = super().get_context_data(**kwargs)
         question_id = self.kwargs.get('question_id')
         question = get_object_or_404(
-            Question.objects.select_related('test').prefetch_related('answers'),
+            Question.objects.select_related('test', 'group').prefetch_related('answers'),
             id=question_id)
         
         answers = question.answers.all()
@@ -830,6 +581,7 @@ class AddAnswersView(LoginRequiredMixin, FormView):
         })
 
         return context
+
 
 # @login_required
 # def add_answers(request, question_id):
@@ -856,34 +608,45 @@ class AddAnswersView(LoginRequiredMixin, FormView):
 #         'action_url':'tests:add_answers',
 #     })
 
+
 class SaveCorrectView(View):
     def post(self, request, *args, **kwargs):
-        print(request.POST)
+        # Получаем ID вопроса из URL и для вопроса предзагружаем все ответы
         question = get_object_or_404(Question.objects.prefetch_related('answers'), id=self.kwargs['question_id'])
 
+        # Получаем список ID для сохранения ответов из запроса
         correct_answers_ids = request.POST.getlist('correct_answers')
+
+        # Обрабатываем лишь случаи вопросов с одиночным выбором и множественным выбором, остальные не изменяем
         if question.answer_type == 'SC':
-            question.answers.all().update(is_correct=False)
+
             if correct_answers_ids:
+
+                # Все ответі делаем не верными
+                question.answers.all().update(is_correct=False)
+
+                # Получаем ID первого ответа из списка и сохраняем его как верный
                 id_answer = correct_answers_ids[0]
                 answer = Answer.objects.filter(id=id_answer).update(is_correct=True)
+
+                question.update_question_score()
             
-
         elif question.answer_type == 'MC':
-            question.answers.all().update(is_correct=False)
-            answers = Answer.objects.filter(id__in=correct_answers_ids).update(is_correct=True)
-            print(answers)
-        else:
-            # INP и MTCH не трогаем так как сохраняется всё коректно по умолчанию
-            ...
-        # answer = Answer.objects.get(id=correct_answers_ids[0])
-        # print(answer)
-        # print(answer.is_correct)
+             
+             if correct_answers_ids:
+                # Все ответі делаем не верными после чего делаем верными только те которые которых ID совпадают с ID из списка
+                question.answers.all().update(is_correct=False)
+                answers = Answer.objects.filter(id__in=correct_answers_ids).update(is_correct=True)
 
-        # for item_id in correct_answers_ids:
-        #     print(f"Type{type(item_id)} and id {item_id}")
-        #     print(get_object_or_404(Answer, id=item_id))
-        print(correct_answers_ids)
+                question.update_question_score()
+        
+        elif question.answer_type == 'INP':
+            question.update_question_score()
+
+        else:
+
+            # Остальные случаи игнорируем
+            ...
 
         return redirect(reverse('tests:add_questions', args=[question.test.id]))
 
@@ -891,8 +654,8 @@ class SaveCorrectView(View):
 def delete_answer(request, answer_id):
     answer = get_object_or_404(Answer, id=answer_id)
     question = get_object_or_404(Question, id=answer.question.id)
-    
     answer.delete()
+    question.update_question_score()
     return redirect('tests:add_answers', question_id=question.id)
 
 
@@ -904,55 +667,106 @@ class AddMathicngPairView(LoginRequiredMixin, FormView):
         question_id = self.kwargs.get('question_id')
         question = get_object_or_404(Question, id=question_id)
 
+        # Присваиваем форму переменной но без сохранения в БД после чего присваиваем ответ к вопросу
         answer = form.save(commit=False)
         answer.question = question
         answer.save()
 
+        question.update_question_score()
         return redirect('tests:add_matching_pair', question_id=question.id)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         question_id = self.kwargs.get('question_id')
 
+        # Получаем вопрос а также все его ответы и его группу
         question = get_object_or_404(
-            Question.objects.select_related('test').prefetch_related('test__questions'),
+            Question.objects.select_related('test').prefetch_related('test__questions', 'answers', 'matching_pairs'),
             id=question_id
         )
 
-        test = question.test
-        questions = test.questions.all()
-        matching_pairs = MatchingPair.objects.filter(question=question)
-        # print(matching_pairs)
-        # print(question.matching_pairs.all())
+        # matching_pairs = MatchingPair.objects.filter(question=question)
 
-        # context['test'] = test
-        # context['question'] = question
-        # context['questions'] = questions
-        # context['form_type'] = 'Соотвецтвие'
-        # context['action_url'] = 'tests:add_matching_pair'
 
         context.update({
-            'test': test,
             'question': question,
             'group': question.group,
-            'questions': questions,
             'form_type': 'Соотвецтвие',
             'action_url': 'tests:add_matching_pair'
         })
 
         return context
-    
+
+
 def delete_matching_pair(request, pair_id):
-    # print(pair_id)
     matching_pair = get_object_or_404(MatchingPair, id=pair_id)
     question = get_object_or_404(Question, id=matching_pair.question.id)
-
-    # print(f"pair:{matching_pair}")
-    # print(f"question: {question}")
-    print(question)
-    print(matching_pair)
     matching_pair.delete()
+    question.update_question_score()
     return redirect('tests:add_matching_pair', question_id=question.id)
+
+class ChangeQuestionScoreView(View):
+    def post(self, request, ids=None, *args, **kwargs):
+        if ids:
+            post_scores = request.POST.get('score')
+
+            try:
+                score = float(post_scores)
+            except ValueError as e:
+                return JsonResponse({'error': 'Помилка при обробці балів', 'detail': f"{e}"}, status=400)
+            
+            try:
+                question = get_object_or_404(Question, id=ids)
+                question.scores = score
+                question.save()
+            
+                return JsonResponse({"success": f"Бали змінено на {score}"})
+            except Exception as e:
+                return JsonResponse({'error': 'Помилка при обробці відповіді', 'detail': f"{e}"}, status=400)
+
+
+class ChangeAnswerScoreView(View):
+
+    def post(self, request, ids=None, *args, **kwargs):
+        if ids:
+            type_answer = request.POST.get('type')
+            post_scores = request.POST.get('score')
+            print(post_scores)
+
+            try:
+                score = float(post_scores)
+            except ValueError as e:
+                return JsonResponse({'error': 'Помилка при обробці балів', 'detail': f"{e}"}, status=400)
+
+
+            if type_answer == "Matching":
+
+                try:
+                    matching_pair = MatchingPair.objects.get(id=ids)
+                    matching_pair.score = score
+                    matching_pair.save()
+
+                    matching_pair.question.update_question_score()
+
+                    return JsonResponse({"success": f"Бали змінено на {score}"})
+                except Exception as e:
+                    return JsonResponse({'error': 'Помилка при обробці відповіді', 'detail': f"{e}"}, status=400)
+                
+
+            elif type_answer == 'Answer':
+
+                try:
+                    answer = Answer.objects.get(id=ids)
+                    answer.score = score
+                    answer.save()
+
+                    answer.question.update_question_score()
+
+                    return JsonResponse({"success": f"Бали змінено на {score}"})
+                except Exception as e:
+                    return JsonResponse({'error': 'Помилка при обробці відповіді', 'detail': f"{e}"}, status=400)
+                
+            return JsonResponse({'error': 'Помилка обробки відповіді'})
 
 #     test = question.test
 #     questions = test.questions.all()
@@ -982,7 +796,8 @@ def delete_matching_pair(request, pair_id):
 #         "action_url":'tests:add_matching_pair',
 #     })
 
-class TestPreviewView(TemplateView):
+
+class TestPreviewView(LoginRequiredMixin,TemplateView):
     template_name = 'tests/test_preview.html'
 
     def get_context_data(self, **kwargs):
@@ -990,30 +805,30 @@ class TestPreviewView(TemplateView):
         user = self.request.user
         test_id = self.kwargs.get('test_id')
 
-        if self.request.user.is_authenticated:
-            # test_results = user.test_results.all()
-            test = get_object_or_404(Tests.objects.select_related('user'), id=test_id)
-            test_results = TestResult.objects.filter(test=test, user=user).select_related('test', 'user').first()
-            test_review = TestsReviews.objects.filter(user=user, test=test).select_related('test', 'user')
-            user_test = TestResult.objects.filter(user=user).select_related('test')
-            if len(user_test) > 0:
-                if user_test[0].remaining_atemps > 0:
-                    test_required = True
-                else:
-                    test_required = False
-            else:
-                test_required = True
+
+        # Получаем тест и результат по тесту либо то что тест находится на ожидании проверки, необходимо для отображения стилей
+        test = get_object_or_404(Tests.objects.select_related('user'), id=test_id)
+
+        server_time = timezone.make_aware(datetime.now(), timezone.get_default_timezone())
+        test_date_in = localtime(test.date_in)
+        test_date_out = localtime(test.date_out)
+
+        if server_time > test_date_in and server_time < test_date_out:
+            # print('Вермя сервера меньше', server_time)
+            # print('Время теста', test_date_in)
+            # print('Вермя окончания теста', test_date_out)
+            open_test = True
         else:
-            test_results = ['Для того чтобы пройти тест зарегестрируйтесь :D']
-            test_review = ['None']
-        
-        test = get_object_or_404(Tests, id=test_id)
+            open_test = False
+
+        test_results = TestResult.objects.filter(test=test, user=user).select_related('test', 'user').first()
+        test_review = TestsReviews.objects.filter(user=user, test=test).exists()
 
         context.update({
             'test': test,
             'test_results': test_results,
-            'required_attemps': test_required,
             'test_review': test_review,
+            'open_test': open_test
         })
 
         return context
@@ -1046,34 +861,45 @@ class TestPreviewView(TemplateView):
 #     return render(request, 'tests/test_preview.html', context=context)
 
 
-class TakeTestView(FormView):
+class TakeTestView(LoginRequiredMixin ,FormView):
     template_name = 'tests/question.html'
     form_class = TestTakeForm
 
     def dispatch(self, request, *args, **kwargs):
-        # Сохраняем test_id в сессию
         self.test = get_object_or_404(Tests, id=self.kwargs['test_id'])
+        server_time = timezone.make_aware(datetime.now(), timezone.get_default_timezone())
 
-        # Очищаем сессию перед созданием новой для теста
-        print(self.test.id, "ID теста который Был запущен")
-        print(request.session.get('test_id'), "ID теста который уже в сессии")
+        if server_time < localtime(self.test.date_in) or server_time > localtime(self.test.date_out):
+            if 'test_responses' in request.session:
 
+                if len(request.session.get('test_responses')) != 0:
+                    return redirect('tests:test_results', test_id=self.kwargs['test_id'])
+                else:
+                    print('return 2')
+                    self.clear_test_session(request=request)
+                    return redirect('app:index')
+                
+            else:
+                print('return 1')
+                return redirect('app:index')
+
+        # При неверном ID теста в сессии очищаем сессию
         session_test_id = request.session.get('test_id')
         if self.test.id != session_test_id and session_test_id != None:
             self.clear_test_session(request=request)
 
+        # Снова добавляем ID теста к сессии
         request.session['test_id'] = self.test.id
 
-
-        # Сохраняем время начала теста, если оно ещё не сохранено
+        # Если время начала теста не установленио то добавляем его в сессию
         if 'test_start_time' not in request.session:
             request.session['test_start_time'] = now().timestamp()  # Сохраняем метку времени
 
-        # Инициализируем таймер, если тест только начался
+        # Если не установлено оставшееся время(от теста) то добавляем его в сессию
         if 'remaining_time' not in request.session:
             request.session['remaining_time'] = self.test.duration.total_seconds()
 
-        # Инициализация сессии для теста
+        # Если сессия для теста не была созданна тогда иничиализируем сессию теста
         if 'question_order' not in request.session:
             response = self.initialize_test_session()
             if isinstance(response, HttpResponse):
@@ -1082,63 +908,49 @@ class TakeTestView(FormView):
         return super().dispatch(request, *args, **kwargs)
 
     def clear_test_session(self, request):
-        """Очищает данные теста из сессии."""
-        print("Очистка сессии в представлении")
+        # Очищаем все возможные ключи из сессии
         keys_to_clear = ['test_id', 'question_order', 'question_index', 'test_responses', 'remaining_time', 'test_start_time']
         for key in keys_to_clear:
             if key in request.session:
                 del request.session[key]
 
     def initialize_test_session(self):
-        # Получаем вопросы, отсортированные по группам
         questions_by_group = {}
+
+        # Проходим по группе вопросов и все вопросы для каждой из них после сохраняем в виде словаря Группа:[Вопросы]
         for group in QuestionGroup.objects.filter(test=self.test).prefetch_related('questions_group'):
             questions_by_group[group.name] = list(group.questions_group.all())
 
-        # Перемешиваем вопросы внутри каждой группы
+        # Проходим по словарю questions_by_group и перемещиваем все вопросы для каждой группы
         for group_name, questions in questions_by_group.items():
             random.shuffle(questions)
 
-        # Объединяем все перемешанные вопросы в один список
+        # Обединяем все перемешанные вопросы в один список
         all_questions = []
         for questions in questions_by_group.values():
             all_questions.extend(questions)
 
-        # Добавляем вопросы без группы
+        # Выбираем оставшиеся вопросы которые не предналежат ни одной из групп после чего перемешиваем их и добавляем в список
         questions_not_group = list(Question.objects.filter(test=self.test, group=None))
         random.shuffle(questions_not_group)
         all_questions.extend(questions_not_group)
 
         if len(all_questions) == 0:
-            # Очищаем сессию дабы избежать конфликтов
-            if 'test_id' in self.request.session:
-                del self.request.session['test_id']
-
-            if 'remaining_time' in self.request.session:
-                del self.request.session['remaining_time']
-
-            if 'test_start_time' in self.request.session:
-                del self.request.session['test_start_time']
-
-
+            # Если нет вопросов, то очищаем сессию и перенаправляем на главную страницу
+            self.clear_test_session(request=self.request)
             return redirect('app:index')
         else:
-            # Сохраняем порядок вопросов в сессии
+            # Иначе инициализируем начальные данные для прохождения теста
             self.request.session['question_order'] = [q.id for q in all_questions]
             self.request.session['question_index'] = 0  # Начинаем с первого вопроса
             self.request.session['test_responses'] = {}  # Для хранения ответов
 
     def get_form_kwargs(self):
-        # Передаем текущий вопрос в форму
         kwargs = super().get_form_kwargs()
         question_order = self.request.session['question_order']
         question_index = self.request.session['question_index']
         current_question_id = question_order[question_index]
         self.current_question = get_object_or_404(Question.objects.select_related('group'), id=current_question_id)
-        # print(self.current_question.test)
-        # print(self.current_question.question_type)
-        # print(self.current_question.answer_type)
-        # print(self.current_question)
 
         kwargs['question'] = self.current_question
         return kwargs
@@ -1146,12 +958,9 @@ class TakeTestView(FormView):
     def form_valid(self, form):
         answer = form.cleaned_data.get('answer')
 
-        # Обрабатываем разные типы вопросов
         if self.current_question.question_type == 'AUD' or self.current_question.question_type == 'IMG' or self.current_question.question_type == 'TXT':
             if self.current_question.answer_type == 'AUD':
                 audio_answer = form.cleaned_data.get(f'audio_answer_{self.current_question.id}', None)
-                print(f"AUDIO_ANSWER_GET:{audio_answer}")
-                print(f"POST:{self.request.POST}")
                 if audio_answer is not None:
                     self.request.session['test_responses'][f"audio_answer_{self.current_question.id}"] = audio_answer
             else:
@@ -1167,19 +976,14 @@ class TakeTestView(FormView):
                     dict_items[left_item] = right
             self.request.session['test_responses'][f"question_{self.current_question.id}_type_matching"] = dict_items
         else:
-
-            # На данный момент резервный путь для того чтобы тесты точно попадали в обработку
             if answer:
                 self.request.session['test_responses'][f"question_{self.current_question.id}"] = answer
 
-        # Обновляем оставшееся время
         remaining_time = int(self.request.POST.get('remaining_time', 0))
         self.request.session['remaining_time'] = remaining_time
 
-        # Переход к следующему вопросу
         self.request.session['question_index'] += 1
 
-        # Проверка, не завершен ли тест
         question_order = self.request.session['question_order']
         question_index = self.request.session['question_index']
         if question_index >= len(question_order):
@@ -1191,17 +995,6 @@ class TakeTestView(FormView):
         context = super().get_context_data(**kwargs)
         question_order = self.request.session['question_order']
         question_index = self.request.session['question_index']
-        # context['test'] = self.test
-        # context['question'] = self.current_question
-        # context['all_questions'] = {
-        #     "current": question_index + 1,
-        #     "all": len(question_order)
-        # }
-        # context['test_btn'] = {
-        #     'text_btn': 'Завершити' if question_index + 1 == len(question_order) else 'Далі',
-        # }
-        # context['current_question_group'] = self.current_question.group
-        # context['remaining_time'] = self.request.session['remaining_time']
 
         context.update({
             'test':self.test,
@@ -1355,8 +1148,7 @@ class TestsResultsView(View):
             self.save_audio_responses(request, responses, audio_answers)
             self.clear_test_session(request)
 
-            # На случай если пользователь перезагрузил страницу при ручном тесте
-            if not test_time:
+            if not test_time or not responses:
                 return redirect('app:index')
             
             test_duration = timedelta(seconds=test.duration.total_seconds() - test_time)
@@ -1370,7 +1162,6 @@ class TestsResultsView(View):
             return render(request, 'tests/success_page_manual_test.html')
         else:
 
-            # На случай если пользователь перезагрузил страницу
             if not test_time:
                 return redirect('app:index')
             
@@ -1379,9 +1170,8 @@ class TestsResultsView(View):
             self.clear_test_session(request)
             context = self.get_context_data(test, score, correct_answers, total_questions)
             return render(request, self.template_name, context)
-        
+    
     def save_audio_responses(self, request, responses, audio_answers):
-        """Сохраняем аудио ответы из сессии"""
         for key, value in responses.items():
             if 'audio_answer_' in key and value:
                 question_id = key.split('audio_answer_')[1]
@@ -1403,109 +1193,158 @@ class TestsResultsView(View):
 
     
     def calculate_results(self, test, responses, test_time):
-        """Вычисляем результаты теста."""
         total_questions = test.questions.count()
+        total_points = test.questions.aggregate(Sum('scores'))['scores__sum']
+        print('TOTAL POINTS', total_points)
         correct_answers = 0.0
+        complete_answers = 0
 
 
         for key, value in responses.items():
             if key.startswith('question_'):
                 question_id = int(key.split('_')[1])
                 question = Question.objects.get(id=question_id)
-                correct_answers += self.evaluate_question(question, value)
+                complete, correct_answer = self.evaluate_question(question, value)
+                correct_answers += correct_answer 
+                print("ОЧКИ ВОПРОСА", question.scores)
+                print("ОЧКИ ответа", int(correct_answers))
+                if complete:
+                    complete_answers += 1
 
         
-        score = round((correct_answers / total_questions) * 100) if total_questions > 0 else 0
+        score = round((correct_answers / total_points) * 100) if total_questions > 0 else 0
         test_duration = timedelta(seconds=test.duration.total_seconds() - test_time)
 
-        return score, int(correct_answers), total_questions, test_duration
+        return score, int(complete_answers), total_questions, test_duration
 
     def evaluate_question(self, question, value):
-        """Оценка вопроса на основе типа"""
         correct_answers = 0.0
+        complete_question = False
 
-        if question.question_type == 'TXT':
-            if question.answer_type == 'SC':
-                correct_answer = question.answers.filter(is_correct=True).first()
-                if correct_answer and correct_answer.id == int(value):
-                    correct_answers += 1.0
+        if question.question_type == 'MTCH':
 
-            elif question.answer_type == 'MC':
-                correct_answers_list = list(question.answers.filter(is_correct=True).values_list('id', flat=True))
-                # print(correct_answers_list)
-            
-                # # Преобразуем ответы пользователя к целым числам и сравниваем с правильным списком
-                if set(map(int, value)) == set(correct_answers_list):
-                    correct_answers += 1.0
+            if question.scores_for == Question.SCORE_FOR_ANSWER:
+            # questions_count = MatchingPair.objects.filter(question=question).count()
 
-            elif question.answer_type == 'INP':
-                correct_answer = question.answers.filter(is_correct=True).first()
-                if str(correct_answer).strip().lower() == str(value).strip().lower():
-                    correct_answers += 1.0
-
-        # if question.question_type == 'SC':
-        #     correct_answer = question.answers.filter(is_correct=True).first()
-        #     if correct_answer and correct_answer.id == int(value):
-        #         correct_answers += 1.0
-        # elif question.question_type == 'MC':
-        #     correct_answers_list = list(question.answers.filter(is_correct=True).values_list('id', flat=True))
-        #     print(correct_answers_list)
-            
-        #     # # Преобразуем ответы пользователя к целым числам и сравниваем с правильным списком
-        #     if set(map(int, value)) == set(correct_answers_list):
-        #         correct_answers += 1.0
-        elif question.question_type == 'IMG':
-            if question.answer_type == 'SC':
-                correct_answer = question.answers.filter(is_correct=True).first()
-                if correct_answer and correct_answer.id == int(value):
-                    correct_answers += 1.0
-
-            elif question.answer_type == 'MC':
-                correct_answers_list = list(question.answers.filter(is_correct=True).values_list('id', flat=True))
-                # print(correct_answers_list)
-            
-                # # Преобразуем ответы пользователя к целым числам и сравниваем с правильным списком
-                if set(map(int, value)) == set(correct_answers_list):
-                    correct_answers += 1.0
-
-            elif question.answer_type == 'INP':
-                correct_answer = question.answers.filter(is_correct=True).first()
-                if str(correct_answer).strip().lower() == str(value).strip().lower():
-                    correct_answers += 1.0
-
-        elif question.question_type == 'AUD':
-            if question.answer_type == 'SC':
-                correct_answer = question.answers.filter(is_correct=True).first()
-                if correct_answer and correct_answer.id == int(value):
-                    correct_answers += 1.0
-
-            elif question.answer_type == 'MC':
-                correct_answers_list = list(question.answers.filter(is_correct=True).values_list('id', flat=True))
-                # print(correct_answers_list)
-            
-                # # Преобразуем ответы пользователя к целым числам и сравниваем с правильным списком
-                if set(map(int, value)) == set(correct_answers_list):
-                    correct_answers += 1.0
-
-            elif question.answer_type == 'INP':
-                correct_answer = question.answers.filter(is_correct=True).first()
-                if str(correct_answer).strip().lower() == str(value).strip().lower():
-                    correct_answers += 1.0
-        # elif question.question_type == "INP":
-        #     correct_answer = question.answers.filter(is_correct=True).first()
-        #     if str(correct_answer).strip().lower() == str(value).strip().lower():
-        #         correct_answers += 1.0
-        elif question.question_type == 'MTCH':
-                questions_count = MatchingPair.objects.filter(question=question).count()
-                points = 1 / questions_count
                 for left, right in value.items():
-                    if MatchingPair.objects.filter(question=question, left_item=left, right_item=right).exists():
-                        correct_answers += points
+                    match = MatchingPair.objects.filter(question=question, left_item=left, right_item=right).first()
+                    if match:
+                        correct_answers += match.score
 
-        return correct_answers
+                    if correct_answers == question.scores:
+                            complete_question = True
+
+            elif question.scores_for == Question.SCORE_FOR_QUESTION:
+                matching_pair_dict = {
+                    str(left_item): right_item
+                    for left_item, right_item in question.matching_pairs.all().values_list('left_item', 'right_item')
+                }
+
+                if len(matching_pair_dict) > 0:
+                    point = question.scores / len(matching_pair_dict)
+                else:
+                    # Возвращаем 0 в очках так как правильных ответов 0
+                    return complete_question, correct_answers
+
+                for left, right in value.items():
+                    if str(left) in matching_pair_dict:
+                        
+                        expected_right = matching_pair_dict[left]
+                        if right == expected_right:
+                            correct_answers += point
+
+                if question.scores == correct_answers:
+                    complete_question = True
+
+        elif question.answer_type == 'SC':
+
+            if question.scores_for == Question.SCORE_FOR_ANSWER:
+                correct_answer = question.answers.filter(is_correct=True).first()
+                
+                try:
+                    if correct_answer and correct_answer.id == int(value):
+                        correct_answers += correct_answer.score
+                        if correct_answers == question.scores:
+                            complete_question = True
+                except ValueError as e:
+                    print(e)
+                
+            elif question.scores_for == Question.SCORE_FOR_QUESTION:
+                correct_answer = question.answers.filter(is_correct=True).first()
+
+                try:
+                    if correct_answer and correct_answer.id == int(value):
+                        correct_answers += question.scores
+                        complete_question = True
+                except ValueError as e:
+                    print(e)
+
+                                
+
+        elif question.answer_type == 'MC':
+                
+                if question.scores_for == Question.SCORE_FOR_ANSWER:
+                    correct_answers_dict = {
+                        str(answer_id): score    
+                        for answer_id, score in question.answers.filter(is_correct=True).values_list('id', 'score')
+                    }
+
+                    for v in value:
+                        if str(v) in correct_answers_dict:
+                            correct_answers += correct_answers_dict[v]
+
+                    if correct_answers == question.scores:
+                        complete_question = True
+
+                elif question.scores_for == Question.SCORE_FOR_QUESTION:
+                    correct_answers_list = question.answers.filter(is_correct=True).values_list('id', flat=True)
+
+                    if len(correct_answers_list) > 0:
+                        points = question.scores / len(correct_answers_list)
+                    else:
+                        return complete_question, correct_answers
+
+                    try:
+                        for v in value:
+                            if int(v) in correct_answers_list:
+                                correct_answers += points
+                    except ValueError as e:
+                        print(e)
+
+                    if correct_answers == question.scores:
+                        complete_question = True
+
+
+        elif question.answer_type == 'INP':
+            if question.scores_for == Question.SCORE_FOR_ANSWER:
+                correct_answers_dict = {
+                    str(text).strip().lower(): score
+                    for text, score in question.answers.filter(is_correct=True).values_list('text', 'score')
+                }
+                    
+                if correct_answers_dict:
+                    if str(value).strip().lower() in correct_answers_dict:
+
+                        correct_answers += correct_answers_dict[value]
+
+                        if correct_answers == question.scores:
+                                complete_question = True
+
+            elif question.scores_for == Question.SCORE_FOR_QUESTION:
+                correct_answers_list = [
+                    str(v).lower().strip() for v in question.answers.filter(is_correct=True).values_list('text', flat=True)
+                ]
+
+                if str(value).lower().strip() in correct_answers_list:
+                    correct_answers += question.scores
+                    complete_question = True
+
+
+
+        print("ОТВЕТ", question, correct_answers,":", complete_question)
+        return complete_question ,correct_answers
     
     def save_test_results(self, request, test, score, test_duration):
-        """Сохраняем результаты теста пользователя"""
         test_result, created = TestResult.objects.get_or_create(
             user=request.user,
             test=test,
@@ -1518,16 +1357,14 @@ class TestsResultsView(View):
                 test_result.duration = test_duration
                 test_result.score = max(test_result.score, score)
                 test_result.save()
-
+                
     def clear_test_session(self, request):
-        """Очищаем данные теста из сессии"""
         session_keys = ['question_order','question_index','test_responses','remaining_time', 'test_id']
         for key in session_keys:
             if key in request.session:
                 del request.session[key]
 
     def get_context_data(self, test, score, correct_answers, total_questions):
-        """Подготовка данных для шаблона"""
         return {
             'test': test,
             'score': score,
@@ -1684,28 +1521,47 @@ class TestsResultsView(View):
 def success_manual_test(request):
     return render(request, 'tests/success_page_manual_test.html')
 
-class TestsForReviewView(TemplateView):
-    template_name = 'tests/tr.html'
+
+class TestsForReviewView(CacheMixin ,TemplateView):
+    template_name = 'tests/test_for_reviews.html'
+
+    def dispatch(self, request, *args, **kwargs):
+        user= request.user
+        if not user.is_superuser or not user.is_staff:
+            return redirect(reverse("app:index"))
+
+        return super().dispatch(request, *args, **kwargs)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         user = get_object_or_404(User, id=self.request.user.id)
-        user_groups = UsersGroupMembership.objects.filter(user=user).select_related('group')
+
+        user_groups = self.set_get_cache(
+            UsersGroupMembership.objects.filter(user=user).select_related('group'),
+            f"user_group_{user.id}",
+            30,
+        )
+        # user_groups = UsersGroupMembership.objects.filter(user=user).select_related('group')
 
         if user_groups.exists():
-            group = user_groups.first().group
-
+            # group = user_groups.first().group
+            group = self.set_get_cache(user_groups[0].group, f"user_first_group_{user.id}", 30)
 
             group_memberships = UsersGroupMembership.objects.filter(group=group).select_related('user')
 
-
-            tests_reviews = Tests.objects.filter(
-                user__in=[member.user for member in group_memberships],
-                check_type="manual"
+            # tests_reviews = Tests.objects.filter(
+            #     user__in=[member.user for member in group_memberships],
+            #     check_type="manual"
+            # )
+            tests_reviews = self.set_get_cache(
+                Tests.objects.filter(
+                    user__in=[member.user for member in group_memberships],
+                    check_type="manual"),
+                f"test_reviews_{user.id}",
+                30,
             )
         else:
             tests_reviews = Tests.objects.none()
-        
 
         context.update({
             'test_result': tests_reviews,
@@ -1713,6 +1569,7 @@ class TestsForReviewView(TemplateView):
         })
 
         return context
+
 
 # def tests_for_review(request):
 #     user = get_object_or_404(User, id=request.user.id)
@@ -1743,6 +1600,7 @@ class TestsForReviewView(TemplateView):
 
 #     return render(request, 'tests/tr.html', context=context)
 
+
 class TestGroupReviewsView(TemplateView):
     template_name = 'tests/test_group_reviews.html'
 
@@ -1752,41 +1610,33 @@ class TestGroupReviewsView(TemplateView):
         test = get_object_or_404(Tests, id=test_id)
         user = get_object_or_404(User, id=self.request.user.id)
 
-        # Получаем всех членов группы и название группы
-        group_memberships, group_name = self.get_user_group(user=user)
+        group_memberships = self.get_user_group(user=user)
 
-        user_reviews = []
+        # user_reviews = []
 
-        # Здесь мы можем сразу выбрать нужные данные
-        reviews_qs = TestsReviews.objects.filter(test=test).select_related('user')
-
-        for us in group_memberships:
-            review = reviews_qs.filter(user=us.user).first()
-            if review:    
-                user_reviews.append(review)
-
-        # context['test'] = test
-        # context['user_reviews'] = user_reviews
+        user_reviews = (
+            TestsReviews.objects.filter(test=test, user__id__in=group_memberships)
+            .select_related('user')  # Оптимизируем запросы, подтягивая данные пользователей
+        )
 
         context.update({
             'test': test,
             'user_reviews': user_reviews
         })
 
-
         return context
 
     def get_user_group(self, user):
-        user_group = UsersGroupMembership.objects.filter(user=user).select_related('group').first().group
-        
-        if user_group:
-            group_memberships = UsersGroupMembership.objects.filter(group=user_group).select_related('group')
-            group_name = user_group.name
-        else:
-            group_memberships = None
-            group_name = None
+        user_membership = UsersGroupMembership.objects.filter(user=user).select_related('group').first()
 
-        return group_memberships, group_name
+        if user_membership and user_membership.group:
+            return (
+                UsersGroupMembership.objects.filter(group=user_membership.group)
+                .values_list('user_id', flat=True)
+            )
+        else:
+            return []
+
 
 # def test_group_reviews(request, test_id):
 #     test = get_object_or_404(Tests, id=test_id)
@@ -1840,14 +1690,11 @@ class TakeTestReviewView(FormView):
         if 'teacher_answers' not in request.session:
             request.session['teacher_answers'] = 0.0
         
-         # Проверяем, если сессия не содержит необходимых данных, пересоздаем её
         required_keys = ['teacher_answers', 'test_review_session', 'question_index', 'teacher_responses', 'test_student_responses_id']
         
         missing_keys = [key for key in required_keys if key not in request.session]
-        print(missing_keys)
         
         if missing_keys:
-            # Если какие-то ключи отсутствуют, пересоздаем сессию
             self.initialize_session_test()
 
         return super().dispatch(request, *args, **kwargs)
@@ -1856,18 +1703,15 @@ class TakeTestReviewView(FormView):
         questions = Question.objects.filter(test=self.test)
 
         if len(questions) == 0:
-            # Вариант: перенаправление или сообщение об ошибке
             self.request.session['test_review_session'] = []
         else:
             self.request.session['test_review_session'] = [q.id for q in questions]
-
 
         self.request.session['question_index'] = 0
         self.request.session['teacher_responses'] = {}
         # self.request.session['correct_answers'] = 0.0
         self.request.session['test_student_responses_id'] = self.test_student_responses.id
         
-
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         question_order = self.request.session['test_review_session']
@@ -1882,9 +1726,6 @@ class TakeTestReviewView(FormView):
         # if not hasattr(self.test_student_responses, 'audio_answers') or self.test_student_responses.audio_answers is None:
         #     self.test_student_responses.audio_answers = {}
 
-        # print(current_question_id)
-        # print(self.test_student_responses.answers)
-        # Получение ответа на основе типа вопроса
         if self.current_question.answer_type == 'AUD':
             self.current_students_question = self.test_student_responses.audio_answers.get(f'audio_answer_{current_question_id}', [])
         elif self.current_question.question_type == 'MTCH':
@@ -1892,81 +1733,182 @@ class TakeTestReviewView(FormView):
         else:
             self.current_students_question = self.test_student_responses.answers.get(f'question_{current_question_id}', [])
 
-        # print(self.current_students_question)
-
         kwargs['audio_answers'] = self.test_student_responses.audio_answers
         kwargs['question'] = self.current_question
         kwargs['student_question'] = self.current_students_question
         return kwargs
 
     def form_valid(self, form):
-
         if self.request.method == 'POST':
+            question = self.request.session.get('')
             action = self.request.POST.get('action')
+
             if action == 'correct':
-                self.request.session['teacher_answers'] += 1.0
+                self.request.session['teacher_answers'] += float(self.current_question.scores)
 
             elif action == 'incorrect':
-                # Ответ неверный поэтому ничего не добавляем
-                print('incorrect')
+                ...
 
-            # добавляем автоматическую обработку для каждого пита ответа если 
             elif action == 'partial':
+                print(self.request.POST)
+
                 if self.current_question.question_type == 'MTCH':
-                    matching_pairs = list(self.current_question.matching_pairs.all())
+                    if self.current_question.scores_for == Question.SCORE_FOR_ANSWER:
+                        matching_pairs_dict = {
+                            str(pair.left_item): pair.score
+                            for pair in self.current_question.matching_pairs.all()
+                        }
 
-                    left_items = [pair.left_item for pair in matching_pairs]
-                    point = 1 / len(left_items) if len(left_items) > 0 else 0
+                        print(matching_pairs_dict)
+                        matching_pairs =  {
+                            left: right
+                            for left, right in self.current_question.matching_pairs.all().values_list('left_item', 'right_item')
+                        }
 
-                    for left_item in left_items:
-                        student_answer = self.request.POST.get(f'answer_{left_item}')
-                        if any(pair.left_item == left_item and pair.right_item == student_answer for pair in matching_pairs):
-                                self.request.session['teacher_answers'] += point
+                        print(matching_pairs)
+
+                        for key, value in self.request.POST.items():
+                            if key.startswith('answer_'):
+                                # Получаем наш левый и правый ответ
+                                left_item = key.replace('answer_', '')
+                                right_item = value
+
+                                # Проверяем наличие в словаре ответов
+                                if left_item in matching_pairs:
+                                    
+                                    # Если елемент найден то также проверяем что right совпадает если так то засчитываем балл
+                                    expect_right = matching_pairs[left_item]
+                                    if right_item == expect_right:
+                                        self.request.session['teacher_answers'] += matching_pairs_dict[left_item]
+
+                    elif self.current_question.scores_for == Question.SCORE_FOR_QUESTION:
+                        matching_pairs_dict =  {
+                            str(left): right
+                            for left, right in self.current_question.matching_pairs.all().values_list('left_item', 'right_item')
+                        }
+
+                        if len(matching_pairs_dict) > 0:
+                            point = self.current_question.scores / len(matching_pairs_dict)
+                        else:
+                            point = 0
+
+                        for key, value in self.request.POST.items():
+                            if key.startswith('answer_'):
+                                # Получаем наш левый и правый ответ
+                                left_item = key.replace('answer_', '')
+                                right_item = value
+
+                                if left_item in matching_pairs_dict:
+                                    expect_right = matching_pairs_dict[left_item]
+                                    if right_item == expect_right:
+                                        self.request.session['teacher_answers'] += point
 
 
                 elif self.current_question.answer_type == 'SC':
-                    answer = list(self.current_question.answers.filter(is_correct=True).values_list('id', flat=True))
-                    
-                    student_answer = int(self.request.POST.get('answer'))
+                    if self.current_question.scores_for == Question.SCORE_FOR_ANSWER:
+                        answer_dict = {
+                            str(ids): score
+                            for ids, score in self.current_question.answers.filter(is_correct=True).values_list('id', 'score')
+                        }
 
-                    if student_answer in answer:
-                        self.request.session['teacher_answers'] += 1.0
+                        # answer = list(self.current_question.answers.filter(is_correct=True).values_list('id', flat=True))
+                        
+                        student_answer = self.request.POST.get('answer')
+
+                        if str(student_answer) in answer_dict:
+                            print(answer_dict[student_answer])
+                            self.request.session['teacher_answers'] += answer_dict[student_answer]
+
+                    elif self.current_question.scores_for == Question.SCORE_FOR_QUESTION:
+                        answer = self.current_question.answers.filter(is_correct=True).values_list('id', flat=True)
+                        print(answer)
+
+                        student_answer = form.cleaned_data.get('answer')
+
+                        try:
+                            if int(student_answer) in answer:
+                                self.request.session['teacher_answers'] += self.current_question.scores
+                        except ValueError as e:
+                            print(e)
 
 
                 elif self.current_question.answer_type == 'MC':
-                    answers_test = list(Answer.objects.filter(question=self.current_question, is_correct=True).values_list('id', flat=True))
+                    if self.current_question.scores_for == Question.SCORE_FOR_ANSWER:
+                        answers_test_dict = {
+                            str(ids): score 
+                            for ids, score in  self.current_question.answers.filter(is_correct=True).values_list('id', 'score')
+                        }
+                        
+                        students_answers = form.cleaned_data.get('answer')
 
-                    answers = self.current_question.answers.filter(is_correct=True).values_list('id', flat=True)
-                    point = 1 / len(answers) if len(answers) > 0 else 0
-                    
-                    students_answers = form.cleaned_data.get('answer')
+                        for answer in students_answers:
+                            if str(answer) in answers_test_dict:
+                                print(answers_test_dict[answer])
+                                self.request.session['teacher_answers'] += answers_test_dict[answer]
 
-                    for answer in students_answers:
-                        if int(answer) in answers_test:
-                            self.request.session['teacher_answers'] += point
+                    elif self.current_question.scores_for == Question.SCORE_FOR_QUESTION:
+                        answers_tuple = tuple(self.current_question.answers.filter(is_correct=True).values_list('id', flat=True))
+                        
+                        # answers_list = self.current_question.answers.filter(is_correct=True).values_list('id', flat=True)
+
+                        if len(answers_tuple) > 0:
+                            point = self.current_question.scores / len(answers_tuple)
+                        else:
+                            point = 0
+
+                        students_answers = form.cleaned_data.get('answer')
+
+                        for answer in students_answers:
+                            try:
+                                if int(answer) in answers_tuple:
+                                    self.request.session['teacher_answers'] += point
+                            except ValueError as e:
+                                print(e)
+                                continue
 
 
                 elif self.current_question.answer_type == 'INP':
-                    answers = self.current_question.answers.filter(is_correct=True).values_list('text', flat=True)
-                    answers = [answer.lower() for answer in answers]
+                    if self.current_question.scores_for == Question.SCORE_FOR_ANSWER:
+                        answers_dict = {
+                            str(text).lower().strip(): score
+                            for text, score in  self.current_question.answers.filter(is_correct=True).values_list('text', 'score')
+                        }
 
-                    student_answer = form.cleaned_data.get('answer')
+                        get_student_answer = form.cleaned_data.get('answer', '')
 
-                    if student_answer.lower() in answers:
-                        self.request.session['teacher_answers'] += 1.0
-                    else:
-                        self.request.session['teacher_answers'] += 0.5
+                        if isinstance(get_student_answer, str):
+                            student_answer = get_student_answer.lower().strip()
+                        else:
+                            student_answer = ''
+
+                        if student_answer in answers_dict:
+                            print(answers_dict[student_answer])
+                            self.request.session['teacher_answers'] += answers_dict[student_answer]
+                        else:
+                            self.request.session['teacher_answers'] += self.current_question.scores / 2
+
+                    elif self.current_question.scores_for == Question.SCORE_FOR_QUESTION:
+                        answers_tuple = tuple(
+                            str(text).lower().strip() for text in self.current_question.answers.filter(is_correct=True).values_list('text', flat=True))
+                        
+                        get_student_answer = str(form.cleaned_data.get('answer')).lower().strip()
+
+                        if isinstance(get_student_answer, str):
+                            student_answer = get_student_answer.lower().strip()
+                        else:
+                            student_answer = ''
+
+                        if student_answer in answers_tuple:
+                            self.request.session['teacher_answers'] += self.current_question.scores
                                        
                                        
                 elif self.current_question.answer_type == 'AUD':
-                    self.request.session['teacher_answers'] += 0.5
+                    self.request.session['teacher_answers'] += self.current_question.scores / 2
 
-
-         # Увеличиваем индекс вопроса только если он не выходит за пределы
+        print(self.request.session['teacher_answers'], '/', self.current_question.scores)
         if self.request.session['question_index'] + 1 < len(self.request.session['test_review_session']):
             self.request.session['question_index'] += 1
         else:
-            # print('redirect 1')
             return redirect('tests:test_review_results')
 
         # question_index = self.request.session['question_index']
@@ -1992,15 +1934,6 @@ class TakeTestReviewView(FormView):
             },
             'current_question_group': self.current_question.group
         })
-        # context['test'] = self.test
-        # context['user'] = self.user
-        # context['question'] = self.current_question
-        # context['all_questions'] = {
-        #     "current": question_index + 1,
-        #     "all": len(test_review_session)
-        # }
-
-        # context['current_question_group'] = self.current_question.group
         return context
 
     
@@ -2225,8 +2158,8 @@ class TestReviewResults(View):
     template_name = 'tests/test_review_results.html'
 
     def get(self, request, *args, **kwargs):
-
         correct_answers = self.request.session['teacher_answers']
+        print(correct_answers)
         test_review_id = self.request.session['test_student_responses_id']
         if test_review_id:
             test_review = TestsReviews.objects.filter(id=test_review_id).select_related('user', 'test').first()
@@ -2237,12 +2170,11 @@ class TestReviewResults(View):
             user = test_review.user
             test = test_review.test
             duration = test_review.duration
-            questions = test.questions.count()
+            total_scores = test.questions.aggregate(Sum('scores'))['scores__sum']
 
         
-
-            score = round((correct_answers / questions) * 100) if questions > 0 else 0
-            print(score)
+            score = round((correct_answers / float(total_scores)) * 100) if total_scores > 0 else 0
+            # print(score)
             test_result = TestResult.objects.create(
                 user=user,
                 test=test,
@@ -2256,7 +2188,6 @@ class TestReviewResults(View):
         test_review.delete()
         self.clear_test_session(request)
 
-
         return redirect('tests:tests_for_review')
     
     def clear_test_session(self, request):
@@ -2265,7 +2196,6 @@ class TestReviewResults(View):
         for key in session_keys:
             if key in session_keys:
                 del request.session[key]
-
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

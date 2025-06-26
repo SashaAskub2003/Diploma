@@ -1,16 +1,19 @@
 from datetime import timedelta
+from queue import PriorityQueue
 import random
 import re
 from django import forms
+from django.utils import timezone
 
+from common.mixins import CacheMixin
 from users.models import User, UsersGroupMembership
 from .models import Categories, MatchingPair, QuestionGroup, Tests, Question, Answer, TestsReviews
 
-class TestForm(forms.ModelForm):
+class TestForm(CacheMixin,forms.ModelForm):
     raw_duration = forms.CharField(
         required=False, 
         widget=forms.TextInput(attrs={
-            'placeholder': 'Введіть тривалість тесту (наприклад, 1г, 30хв, 45сек)'
+            'placeholder': 'Введіть тривалість тесту в хвилинах'
         })
     )
 
@@ -18,25 +21,43 @@ class TestForm(forms.ModelForm):
         self.user = kwargs.pop('user', None)
         super().__init__(*args, **kwargs)
 
-        self.fields['category'].choices = [(item.id, item.name) for item in Categories.objects.all()]
+        query = self.set_get_cache(Categories.objects.all(), "category_cache", 15)
+        self.fields['category'].choices = [(item.id, item.name) for item in query]
 
 
     class Meta:
         model = Tests
-        fields = ['name', 'description', 'image','category', 'check_type', 'date_out']
+        fields = ['name', 'description', 'image','category', 'check_type', 'date_in','date_out']
         widgets = {
             'name':forms.TextInput(attrs={'placeholder': 'Назва тесту'}),
             'image': forms.ClearableFileInput(attrs={
-                'class': 'custom-file-input',
+                'class': 'custom-file-input hidden',
                 'id': 'uploadImage',
-                'style': 'display: none;'  # Скрываем стандартный input
+                # 'style': 'display: none;'  # Скрываем стандартный input
             }),
             # 'duration': forms.TextInput(attrs={
             #     'placeholder': 'Введіть тривалісь тесту гг:хх:сс)',
             # }),
             'category': forms.Select(attrs={'class': 'custom-select'}),
             'check_type': forms.Select(attrs={'class': 'custom-select'}),
-            'date_out': forms.DateInput(attrs={'type': 'date'}),
+            'date_in': forms.DateTimeInput(
+                attrs={
+                    'type': 'datetime-local',
+                    'class': 'form-control',  # опционально (для стилизации)
+                    'min': f"{timezone.localtime().now().date()}T{timezone.localtime().now().time().strftime("%H:%M")}"
+                    # 'min': f"{timezone.now().time().strftime("%H:%M")}"
+                },
+                format='%Y-%m-%dT%H:%M'     # обязательный формат
+            ),
+            'date_out': forms.DateTimeInput(
+                attrs={
+                    'type': 'datetime-local',
+                    'class': 'form-control',  # опционально (для стилизации)
+                    'min': f"{timezone.localtime().now().date()}T{timezone.localtime().now().time().strftime("%H:%M")}"
+                },
+                format='%Y-%m-%dT%H:%M'     # обязательный формат
+            )
+
         }
 
         name = forms.CharField(required=True)
@@ -51,25 +72,37 @@ class TestForm(forms.ModelForm):
         if isinstance(data, timedelta):
             return data
 
+        try:
+            value = int(data)
+        except ValueError:
+            raise forms.ValidationError('Помилка, перевірте поле на правильність введеного часу')
 
-        pattern = r'(\d+)(г|хв|сек)'
-        match = re.match(pattern, data)
-        if not match:
-            raise forms.ValidationError("Невірний формат часу, вкажіть вірний формат часу г|хв|сек")
-        
-        value, unit = match.groups()
-        value = int(value)
-
-        if unit == 'г':
-            result = timedelta(hours=value)
-        elif unit == 'хв':
+        if value:
             result = timedelta(minutes=value)
-        elif unit == 'сек':
-            result = timedelta(seconds=value)
-        else:
-            raise forms.ValidationError("Невідома одиниця виміру")
         
-        return result
+            return result
+        
+        raise forms.ValidationError('Невідома помилка, перевірте поле')
+        
+        
+        # pattern = r'(\d+)(г|хв|сек)'
+        # match = re.match(pattern, data)
+        # if not match:
+        #     raise forms.ValidationError("Невірний формат часу, вкажіть вірний формат часу г|хв|сек")
+        
+        # value, unit = match.groups()
+        # value = int(value)
+
+        # if unit == 'г':
+        #     result = timedelta(hours=value)
+        # elif unit == 'хв':
+        #     result = timedelta(minutes=value)
+        # elif unit == 'сек':
+        #     result = timedelta(seconds=value)
+        # else:
+        #     raise forms.ValidationError("Невідома одиниця виміру")
+        
+        # return result
     
     def clean_date_out(self):
         data = self.cleaned_data.get('date_out')
@@ -141,7 +174,10 @@ class QuestionForm(forms.ModelForm):
         #     self.fields.pop('answer_type', None)
 
         if test:
-            question_groups = [('','Группа питання')] + [(item.id, item.name) for item in QuestionGroup.objects.filter(test=test)]
+            question_groups = [('','Група питання')] + list(
+                QuestionGroup.objects.filter(test=test).values_list('id', 'name')
+            )
+
             self.fields['group'].choices = question_groups
 
             if question_groups:
@@ -157,8 +193,15 @@ class QuestionForm(forms.ModelForm):
                     (choice, label) for choice, label in Question.ANSWER_TYPES
                 ]
 
+            scores_types = [("", "Тип оцінювання")] + [
+                (choice, label) for choice, label in Question.SCORE_FOR_TYPES
+            ]
+
             self.fields['answer_type'].choices = filtered_choices
             self.fields['answer_type'].initial = filtered_choices[0]
+
+            self.fields["scores_for"].choices = scores_types
+            self.fields["scores_for"].initial = scores_types[0]
         else:
             self.fields['group'].queryset = QuestionGroup.objects.none()
 
@@ -168,13 +211,14 @@ class QuestionForm(forms.ModelForm):
         self.fields['question_type'].initial = question_type[0]
 
         self.fields['group'].required = False
+        # self.fields['answer_type'].required = True
 
         
 
 
     class Meta:
         model = Question
-        fields = ['text', 'question_type','image', 'audio', 'answer_type', 'group']
+        fields = ['text', 'question_type','image', 'audio', 'answer_type', 'group', 'scores_for' , 'scores']
         widgets = {
             'text': forms.TextInput(),
             'question_type': forms.Select(attrs={'class': 'custom-select', 'id': 'questionSelect'}),
@@ -191,32 +235,59 @@ class QuestionForm(forms.ModelForm):
                 'style': 'display: none;'
                 }),
             'group': forms.Select(attrs={'class': 'custom-select'}),
-            'answer_type': forms.Select(attrs={'class': 'custom-select', 'id': 'answerSelect'})
+            'answer_type': forms.Select(attrs={'class': 'custom-select', 'id': 'answerSelect', 'required': True}),
+            'scores_for': forms.Select(attrs={"class": 'custom-select', 'id': 'scoresFor'}),
+            'scores': forms.NumberInput(attrs={'class': 'number-input', 'required': False})
         }
 
-class QuestionStudentsForm(forms.ModelForm):
+    def clean_scores(self):
+        score = self.cleaned_data.get('scores')
+        scores_for = self.cleaned_data.get("scores_for")
+        print(scores_for)
+        print(score)
+
+        if score < 0:
+            raise forms.ValidationError('Поле балів повинно бути з позитивним значенням або 0')
+        
+        # if scores_for == "SA":
+        #     score = 0
+        #     print("Значение", score)
+        # else:
+        #     print("Без обновления")
+
+
+        return score
+    
+
+class QuestionStudentsForm(CacheMixin ,forms.ModelForm):
     def __init__(self, *args, **kwargs):
         test = kwargs.pop('test', None)  # Текущий тест
         user = kwargs.pop('user', None)  # Текущий пользователь (учитель)
         super().__init__(*args, **kwargs)
 
 
-         # Получаем группу, в которой состоит учитель
-        user_group = UsersGroupMembership.objects.filter(user=user).first()
+        # Получаем группу, в которой состоит учитель
+        user_group = UsersGroupMembership.objects.filter(user=user).select_related('group').first()
+        
         if user_group:
-            students_in_group = UsersGroupMembership.objects.filter(group=user_group.group)
+            students_in_group = UsersGroupMembership.objects.filter(group=user_group.group).prefetch_related('user').values_list('user_id', 'user__username')
 
             # Список студентов для чекбоксов
-            students = [(item.user.id, item.user.username) for item in students_in_group]
+            students = [(ids, username) for ids, username in students_in_group]
 
-            # Заполняем поле с чекбоксами
-            self.fields['students'] = forms.MultipleChoiceField(
-                choices=students,  # Список студентов в формате (id, имя)
-                widget=forms.CheckboxSelectMultiple,
-                label='Додати студентів до тесту',
-                required=False
-            )
+            
+        else:
+            students = [(user.id, user.username)]
         
+
+        # Заполняем поле с чекбоксами
+        self.fields['students'] = forms.MultipleChoiceField(
+           choices=students,  # Список студентов в формате (id, имя)
+           widget=forms.CheckboxSelectMultiple,
+           label='Додати студентів до тесту',
+           required=False
+          )
+
 
         # Устанавливаем начальные значения для чекбоксов, если студенты уже выбраны
         if test and test.students:
@@ -245,20 +316,36 @@ class QuestionStudentsForm(forms.ModelForm):
 class MatchingPairForm(forms.ModelForm):
     class Meta:
         model = MatchingPair
-        fields = ['left_item', 'right_item']
+        fields = ['left_item', 'right_item', 'score']
         widgets = {
             'left_item': forms.TextInput(attrs={'placeholder': 'Ліва частина (Відповідність)'}),
             'right_item': forms.TextInput(attrs={'placeholder': 'Права частина (Відповідність)'}),
         }
 
+    def clean_score(self):
+        score = self.cleaned_data.get('score')
+
+        if score < 0:
+            raise forms.ValidationError('Поле балів повинно бути з позитивним значенням')
+        
+        return score
+
 class AnswerForm(forms.ModelForm):
     class Meta:
         model = Answer
-        fields = ['text', 'is_correct']
+        fields = ['text','score', 'is_correct']
         widgets = {
             'text': forms.TextInput(attrs={'class': 'form-control'}),
             'is_correct': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
+
+    def clean_score(self):
+        score = self.cleaned_data.get('score')
+
+        if score < 0:
+            raise forms.ValidationError('Поле балів повинно бути з позитивним значенням')
+        
+        return score
 
 
 

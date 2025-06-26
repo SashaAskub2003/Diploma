@@ -19,6 +19,9 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from debug_toolbar.toolbar import debug_toolbar_urls
+from django.views.decorators.csrf import csrf_exempt
+from app.views import CspReports
 
 
 urlpatterns = [
@@ -26,7 +29,9 @@ urlpatterns = [
     path('', include('app.urls', namespace='app')),
     path("testes/", include("tests.urls", namespace='tests')),
     path("user/", include("users.urls", namespace='users')),
+    path('csp-report/', csrf_exempt(CspReports.as_view()), name='csp_reports')
 ] 
+#  + debug_toolbar_urls()
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

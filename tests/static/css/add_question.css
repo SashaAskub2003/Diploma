@@ -125,7 +125,7 @@ html, body {
     border: 1px solid rgba(255, 255, 255, 0.60);
     border-radius: 12px;
     appearance: none; /* Убираем стандартную стрелочку */
-    background-image: url('/static/icons/create_test_arrow.svg'); /* Добавляем свою стрелку */
+    background-image: url('https://teststepbucket.s3.amazonaws.com/icons/create_test_arrow.svg'); /* Добавляем свою стрелку */
     background-repeat: no-repeat;
     background-position: right 10px center; /* Положение стрелки */
     background-size: 24px; /* Размер стрелки */
@@ -191,6 +191,83 @@ html, body {
     margin-right: 10px;
 }
 
+/* Кастомные стрелки */
+.custom-number-input{
+    position: relative;
+    display: inline-block;
+    display: none;
+    animation: fadeIn 0.3s ease-in-out;
+    animation-fill-mode: forwards;
+}
+
+.number-input {
+    padding: 16px 12px;
+    background-color: #363242;
+    border: 1px solid rgba(255, 255, 255, 0.60);
+    color: #ffffff;
+    border-radius: 12px;
+    font-size: 18px;
+    width: 100%;
+    height: 57px;
+}
+
+.number-input-container::after {
+    content: "▲▼";
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: #ffffff;
+    font-size: 15px;
+    line-height: 1;
+    letter-spacing: 2px; /* Отступ между стрелками */
+}
+
+.number-input::-webkit-inner-spin-button,
+.number-input::-webkit-outer-spin-button {
+    appearance: none;
+    -moz-appearance: textfield;
+    margin: 0;
+}
+
+/* Кастомные стрелки */
+.arrows {
+    position: absolute;
+    right: 5px;
+    top: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    width: 30px;
+}
+
+.arrow {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    text-align: center;
+    color: #fff;
+    transition: color 0.2s;
+}
+
+.arrow:hover {
+    color: #7260F5;
+    background-color: #363242;
+}
+
+.up {
+    margin-bottom: 3px; /* Отступ между стрелками */
+}
+
+.down {
+    margin-top: 3px; /* Отступ между стрелками */
+}
+
 .question-btn {
     max-width: 260px;
     margin: 0 auto;
@@ -228,12 +305,71 @@ html, body {
 .students-container {
     position: absolute; /* Позволяет двигаться внутри родителя */
     display: flex;
+    flex-direction: column;
     background: #363242;
     max-width: 410px;
     width: 100%;
     padding: 24px;
     border-radius: 12px;
     transition: transform 0.05s linear; /* Гладкость движения */
+}
+
+.all-students-submit-btn{
+    max-height: 35px;
+    display: inline-flex;
+    align-items: center;
+    text-align: center;
+    justify-content: center;
+    margin-top: 20px;
+    padding: 7px 12px;
+    font-family: Roboto;
+    font-size: 18px;
+    font-style: normal;
+    font-weight: 600;
+    line-height: normal;
+    color: #7260F5; /* Синий текст */
+    background-color: rgba(255, 255, 255, 0.05); /* Темный фон */
+    border: 1.5px solid #7260F5; /* Синяя обводка */
+    border-radius: 12px;
+    text-decoration: none;
+    font-weight: bold;
+    transition: background-color 0.7s, color 0.3s;
+    white-space: nowrap; /* Предотвращает перенос текста */
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.05);
+        color: rgb(255, 255, 255);
+        border-color: #ffffff;
+    }
+}
+
+.all-students-delete-btn {
+    max-height: 35px;
+    display: inline-flex;
+    align-items: center;
+    text-align: center;
+    justify-content: center;
+    margin-top: 20px;
+    padding: 7px 12px;
+    font-family: Roboto;
+    font-size: 18px;
+    font-style: normal;
+    font-weight: 600;
+    line-height: normal;
+    color: #7260F5; /* Синий текст */
+    background-color: rgba(255, 255, 255, 0.05); /* Темный фон */
+    border: 1.5px solid #7260F5; /* Синяя обводка */
+    border-radius: 12px;
+    text-decoration: none;
+    font-weight: bold;
+    transition: background-color 0.7s, color 0.3s;
+    white-space: nowrap; /* Предотвращает перенос текста */
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.05);
+        color: rgb(255, 255, 255);
+        border-color: #ffffff;
+    }
 }
 
 .students-container form p{
@@ -336,6 +472,34 @@ input[type="checkbox"]:checked::after {
 .add-and-delete {
     display: flex;
     gap: 20px;
+    justify-content: end;
+    align-items: center;
+}
+
+.score-container {
+    display: flex;
+    width: 20%;
+    min-height: 100%;
+    color: #ffffff;
+    border: 1px solid #7260F5;
+    border-radius: 12px;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+
+    input{
+        display: flex;
+        padding: 10px 10px;
+        border-radius: 12px;
+        min-height: 100%;
+        background-color: #363242;
+        color: #ffffff;
+        font-size: 16px;
+        border: none;
+        width: 100%;
+        text-align: center;
+        justify-content: center;
+    }
 }
 
 .delete-container {
@@ -495,4 +659,120 @@ input[type="checkbox"]:checked::after {
     font-family: Arial, sans-serif;
     display: none;
     z-index: 1000;
+}
+
+@media (max-width: 1000px){
+    .test-and-students{
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .students-base-container {
+        position: static;
+        flex-direction: row; 
+        display: flex;
+        overflow: hidden; /* Ограничение движения внутри контейнера */
+        height: 250px !important;
+        max-width: 630px;
+        padding-bottom: 10px;
+        box-sizing: border-box;
+
+    }
+
+    .students-container {
+        max-width: 630px;
+        position: relative; /* Убираем absolute */
+        padding: 25px; 
+        height: 250px !important;
+        box-sizing: border-box;
+        margin-bottom: 20px; /* Добавляем отступ снизу */
+        overflow-y: auto; /* Добавляем вертикальный скролл */
+        -webkit-overflow-scrolling: touch; /* Поддержка плавного скролла на мобильных устройствах */
+    } 
+
+    .students-container form {
+        margin-bottom: 15px;
+    }
+
+    /* Или можно добавить отступ к последнему элементу внутри формы */
+    #id_students {
+        padding-bottom: 24px;
+    }
+}
+
+.message-popup {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: white;
+    padding: 15px 20px;
+    border-radius: 5px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    font-size: 16px;
+    font-family: Arial, sans-serif;
+    display: none;
+    z-index: 1000;
+}
+
+
+.message-popup.active{
+    display: flex;
+    background-color: rgb(0, 119, 0);
+    animation: fadeIn 0.4s ease;
+    animation-fill-mode: forwards;
+}
+
+
+.message-popup.error {
+    display: flex;
+    background-color: #ff4d4f;
+    animation: fadeIn 0.4s ease;
+    animation-fill-mode: forwards;
+}
+
+
+@keyframes fadeIn{
+    0% {
+        opacity: 0;
+    }
+
+    100% {
+        opacity: 1;
+    }
+}
+
+@media (max-width: 550px){
+    .question-field {
+        flex-direction: column;
+        padding: 5px 2px;
+        border: 1px solid #7260F5;
+        border-radius: 12px;
+        gap: 15px;
+    }
+
+    .question-field p{
+        font-size: 16px;
+    }
+
+    .button-container {
+        flex-direction: column;
+        gap: 15px;
+
+    }
+
+    .save-test-btn {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .delete-btn {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .delete-test-btn {
+        max-width: 100%;
+        width: 100%;
+    }
 }

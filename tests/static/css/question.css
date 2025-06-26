@@ -11,6 +11,8 @@
     margin-bottom: 60px;
 }
 
+
+
 /* Количество вопрсов| время | категория теста */
 
 .test-header {
@@ -84,6 +86,7 @@
     color: #FFF;
     display: flex;
     justify-content: start;
+    align-items: center;
     margin-bottom: 40px;
 }
 
@@ -332,6 +335,32 @@
     color: #FFFFFF;
 }
 
+.audio-form h3 {
+    color: #FFF;
+    font-family: Roboto;
+    font-size: 18px;
+    font-style: normal;
+    font-weight: 500;
+    line-height: 146%;
+    justify-content: start;
+}
+
+.audio-form h3 label {
+    color: #FFF;
+    display: flex;
+    justify-content: start;
+    align-items: center;
+    margin-bottom: 40px;
+}
+
+.audio-label-question label{
+    color: #FFF !important;
+    display: flex;
+    justify-content: start !important;
+    align-items: center;
+    margin-bottom: 40px;
+}
+
 .question-audio-container {
     display: flex;
     width: 300px;
@@ -412,6 +441,21 @@
 /* Форма вопросов с установлением соотвецтвий */
 .form-matching {
     display:flex;
+    flex-direction: column;
+    width: 100%;
+}
+
+.matching-question-text h3{
+    color: #FFF;
+    display: flex;
+    justify-content: start;
+    align-items: center;
+    margin-bottom: 40px;
+    text-align: start;
+}
+
+.matching-container {
+    display: flex;
     width: 100%;
     justify-content: space-between;
 }
@@ -450,10 +494,10 @@
 .form-txt-and-img h3 label{
     color: #FFF;
     display: flex;
-    word-wrap: break-word; /* Перенос длинных слов */
-    word-break: break-word; /* Разрыв длинных слов */
-    overflow-wrap: break-word; /* Дополнительный вариант для переноса */
+    justify-content: start;
+    align-items: center;
     margin-bottom: 40px;
+    text-align: start;
 }
 
 .audio-base-container {
